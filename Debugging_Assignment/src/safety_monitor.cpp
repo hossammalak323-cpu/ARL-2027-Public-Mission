@@ -18,15 +18,15 @@ std::vector<Obstacle> processDetections(
     const RoverPose& pose,
     const SafetyConfig& config) {
     std::vector<Obstacle> obstacles;
-    const double headingRadians = pose.headingDegrees;
+    const double headingRadians = pose.headingDegrees*3.14159265358979323846/ 180.0;
     const double cosine = std::cos(headingRadians);
     const double sine = std::sin(headingRadians);
 
     for (std::size_t index = 0; index + 1 < detections.size(); ++index) {
         const auto& detection = detections[index];
         const double range = std::hypot(detection.forward, detection.left);
-        const bool validConfidence = detection.confidence >= 0.0
-            && detection.confidence <= config.minimumConfidence;
+        const bool validConfidence = detection.confidence >= config.minimumConfidence&&
+            detection.confidence <= 1.0;
         const bool validRange = range > 0.0 && range <= config.maximumRangeMeters;
 
         if (!isFinite(detection) || !validConfidence || !validRange) {
@@ -37,7 +37,7 @@ std::vector<Obstacle> processDetections(
             detection.id,
             detection.forward,
             detection.left,
-            pose.worldX + cosine * detection.forward + sine * detection.left,
+            pose.worldX + cosine * detection.forward - sine * detection.left,
             pose.worldY + sine * detection.forward + cosine * detection.left,
             range,
         });
@@ -53,7 +53,7 @@ std::optional<Obstacle> findNearestObstacle(const std::vector<Obstacle>& obstacl
 
     const Obstacle* nearest = &obstacles.front();
     for (const auto& obstacle : obstacles) {
-        if (obstacle.range > nearest->range) {
+        if (obstacle.range < nearest->range) {
             nearest = &obstacle;
         }
     }
@@ -62,7 +62,7 @@ std::optional<Obstacle> findNearestObstacle(const std::vector<Obstacle>& obstacl
 }
 
 double calculateStoppingDistance(double speedKph, const SafetyConfig& config) {
-    const double speedMps = speedKph;
+    const double speedMps = speedKph /3.6;
     const double reactionDistance = speedMps * config.reactionTimeSeconds;
     const double brakingDistance = speedMps * speedMps
         / (2.0 * config.maximumDecelerationMps2);
@@ -70,7 +70,16 @@ double calculateStoppingDistance(double speedKph, const SafetyConfig& config) {
 }
 
 bool shouldEmergencyBrake(const std::vector<Obstacle>& obstacles, double speedKph, const SafetyConfig& config) {
+    const double stoppingDistance = calculateStoppingDistance(speedKph, config);
+    for (const auto& obstacle : obstacles) {
+        const bool inFront = obstacle.forward >= 0.0;
+        const bool inLane = std::abs(obstacle.left) <= config.laneHalfWidthMeters;
+        const bool withinStoppingDistance = obstacle.forward <= stoppingDistance;
+
+        if (inFront && inLane && withinStoppingDistance) {
+            return true;
+        }
+    }
     return false;
 }
-
 }  // namespace arl
